@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>HMIS Entry/Exit Comparison Tool (Final)</title>
+<title>HMIS Entry/Exit Comparison Tool</title>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
@@ -14,6 +14,7 @@ button{padding:10px 15px;margin:5px;cursor:pointer;}
 table{border-collapse:collapse;width:100%;margin-top:10px;}
 th,td{border:1px solid #ccc;padding:6px;}
 th{background:#eee;}
+.results{max-height:250px;overflow:auto;margin-bottom:20px;}
 .summary{background:#eef7ff;padding:10px;margin:10px 0;border-radius:6px;}
 </style>
 </head>
@@ -35,7 +36,8 @@ th{background:#eee;}
 
 <script>
 
-let exportData = {};
+let both=[], entry=[], exit=[], duplicates=[];
+let exportMeta={};
 
 function norm(v){ return String(v || "").trim(); }
 
@@ -45,6 +47,77 @@ function detectColumn(data, keyword){
 }
 
 function mostCommonDate(arr){
-  const freq = {};
-  arr.forEach(r => {
+  const freq={};
+  arr.forEach(r=>{
     if(!r.Date) return;
+    freq[r.Date]=(freq[r.Date]||0)+1;
+  });
+  return Object.keys(freq).sort((a,b)=>freq[b]-freq[a])[0] || "";
+}
+
+function read(file){
+  return new Promise(res=>{
+    const fr=new FileReader();
+    fr.onload=e=>{
+      const wb=XLSX.read(new Uint8Array(e.target.result),{type:"array"});
+      const ws=wb.Sheets[wb.SheetNames[0]];
+      res(XLSX.utils.sheet_to_json(ws,{defval:""}));
+    };
+    fr.readAsArrayBuffer(file);
+  });
+}
+
+async function run(){
+
+const f1=document.getElementById("file1").files[0];
+const f2=document.getElementById("file2").files[0];
+
+if(!f1||!f2) return alert("Select both files");
+
+// READ FILES
+const d1=await read(f1);
+const d2=await read(f2);
+
+// DETECT COLUMNS CORRECTLY
+const h1 = detectColumn(d1,"hmis");
+const h2 = detectColumn(d2,"hmis");
+const n1 = detectColumn(d1,"name");
+const n2 = detectColumn(d2,"name");
+const dt1 = detectColumn(d1,"date");
+const dt2 = detectColumn(d2,"date");
+
+// MAPS (store FIRST instance for classification)
+const map1={}, map2={};
+
+// COUNTING (for duplicates)
+const count1={}, count2={};
+
+// RESET OUTPUT
+both=[]; entry=[]; exit=[]; duplicates=[];
+
+// PROCESS FILE 1 (EARLIER)
+d1.forEach(r=>{
+  const h=norm(r[h1]);
+  if(!h) return;
+
+  const record={
+    HMIS:h,
+    Name:norm(r[n1]),
+    Date:r[dt1]||""
+  };
+
+  count1[h]=(count1[h]||0)+1;
+
+  if(!map1[h]) map1[h]=record;
+
+  if(count1[h]>1){
+    duplicates.push({...record, Source:"Earlier File"});
+  }
+});
+
+// PROCESS FILE 2 (LATER)
+d2.forEach(r=>{
+  const h=norm(r[h2]);
+  if(!h) return;
+
+  const record={
