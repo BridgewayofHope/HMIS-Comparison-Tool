@@ -82,11 +82,6 @@ function detectDate(data){
   return keys.find(k=>k.toLowerCase().includes("date")) || "";
 }
   
-function detectName(data){
-  const keys=Object.keys(data[0]||{});
-  return keys.find(k=>k.toLowerCase().includes("name")) || "";
-}
-  
 function render(id,arr){
   let html="<table><tr><th>HMIS</th><th>Name</th><th>Date</th></tr>";
   arr.forEach(r=>{
