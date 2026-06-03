@@ -1,123 +1,254 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>HMIS Entry/Exit Comparison Tool</title>
+<title>HMIS Audit Tool</title>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
 <style>
-body{font-family:Arial;background:#f5f5f5;padding:20px;}
-.container{background:white;padding:20px;border-radius:8px;box-shadow:0 0 10px rgba(0,0,0,.15);}
-button{padding:10px 15px;margin:5px;cursor:pointer;}
-table{border-collapse:collapse;width:100%;margin-top:10px;}
-th,td{border:1px solid #ccc;padding:6px;}
-th{background:#eee;}
-.results{max-height:250px;overflow:auto;margin-bottom:20px;}
-.summary{background:#eef7ff;padding:10px;margin:10px 0;border-radius:6px;}
+body { font-family: Arial; background:#f4f4f4; padding:20px; }
+.container { background:white; padding:20px; border-radius:8px; }
+button { padding:10px; margin:5px; }
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin-top:10px;
+}
+
+th, td {
+  border:1px solid #ccc;
+  padding:6px;
+}
+
+th { background:#eee; }
+
+.exit { background:#ffd6d6; }
+.entry { background:#d6ffd6; }
+.stayed { background:#d6e6ff; }
+.zero { background:#f1d6ff; }
+
+h3 { margin-top:30px; }
 </style>
+
 </head>
 
 <body>
 <div class="container">
 
-<h2>HMIS Entry/Exit Comparison Tool</h2>
+<h2>HMIS Audit Tool</h2>
 
-<input type="file" id="file1"><br><br>
-<input type="file" id="file2"><br><br>
+<input type="file" id="file1"> Earlier Day<br><br>
+<input type="file" id="file2"> Later Day<br><br>
 
-<button onclick="run()">Compare</button>
-<button onclick="download()">Download Excel</button>
+<button onclick="processFiles()">Compare</button>
+<button onclick="downloadExcel()">Download Excel</button>
 
-<div id="summary" class="summary"></div>
+<div id="status"></div>
+<div id="tables"></div>
 
 </div>
 
 <script>
 
-let both=[], entry=[], exit=[], duplicates=[];
-let exportMeta={};
+let results = {};
 
 function norm(v){ return String(v || "").trim(); }
 
-function detectColumn(data, keyword){
-  const keys = Object.keys(data[0] || {});
-  return keys.find(k => k.toLowerCase().includes(keyword)) || "";
+function detectColumn(data, key){
+  return Object.keys(data[0]||{}).find(k=>k.toLowerCase().includes(key)) || "";
 }
 
-function mostCommonDate(arr){
-  const freq={};
-  arr.forEach(r=>{
-    if(!r.Date) return;
-    freq[r.Date]=(freq[r.Date]||0)+1;
-  });
-  return Object.keys(freq).sort((a,b)=>freq[b]-freq[a])[0] || "";
-}
-
-function read(file){
+function readFile(file){
   return new Promise(res=>{
-    const fr=new FileReader();
-    fr.onload=e=>{
+    const r=new FileReader();
+    r.onload=e=>{
       const wb=XLSX.read(new Uint8Array(e.target.result),{type:"array"});
       const ws=wb.Sheets[wb.SheetNames[0]];
       res(XLSX.utils.sheet_to_json(ws,{defval:""}));
     };
-    fr.readAsArrayBuffer(file);
+    r.readAsArrayBuffer(file);
   });
 }
 
-async function run(){
+async function processFiles(){
 
-const f1=document.getElementById("file1").files[0];
-const f2=document.getElementById("file2").files[0];
+const f1=file1.files[0];
+const f2=file2.files[0];
 
-if(!f1||!f2) return alert("Select both files");
+if(!f1||!f2){
+  alert("Select both files");
+  return;
+}
 
-// READ FILES
-const d1=await read(f1);
-const d2=await read(f2);
+const d1=await readFile(f1);
+const d2=await readFile(f2);
 
-// DETECT COLUMNS CORRECTLY
-const h1 = detectColumn(d1,"hmis");
-const h2 = detectColumn(d2,"hmis");
-const n1 = detectColumn(d1,"name");
-const n2 = detectColumn(d2,"name");
-const dt1 = detectColumn(d1,"date");
-const dt2 = detectColumn(d2,"date");
+const h1=detectColumn(d1,"hmis");
+const h2=detectColumn(d2,"hmis");
+const n1=detectColumn(d1,"name");
+const n2=detectColumn(d2,"name");
+const dt1=detectColumn(d1,"date");
+const dt2=detectColumn(d2,"date");
 
-// MAPS (store FIRST instance for classification)
-const map1={}, map2={};
+const all={}, zero=[];
 
-// COUNTING (for duplicates)
-const count1={}, count2={};
+// LOAD DATA
+[d1,d2].forEach((set,i)=>{
+  set.forEach(r=>{
+    const h=norm(r[i?h2:h1]);
+    if(!h) return;
 
-// RESET OUTPUT
-both=[]; entry=[]; exit=[]; duplicates=[];
+    const rec={
+      HMIS:h,
+      Name: norm(r[i?n2:n1]),
+      Date: r[i?dt2:dt1] || "",
+      Source: i?"Later":"Earlier"
+    };
 
-// PROCESS FILE 1 (EARLIER)
-d1.forEach(r=>{
-  const h=norm(r[h1]);
-  if(!h) return;
+    if(h === "0"){
+      zero.push(rec);
+    }
 
-  const record={
-    HMIS:h,
-    Name:norm(r[n1]),
-    Date:r[dt1]||""
-  };
-
-  count1[h]=(count1[h]||0)+1;
-
-  if(!map1[h]) map1[h]=record;
-
-  if(count1[h]>1){
-    duplicates.push({...record, Source:"Earlier File"});
-  }
+    if(!all[h]) all[h]=[];
+    all[h].push(rec);
+  });
 });
 
-// PROCESS FILE 2 (LATER)
-d2.forEach(r=>{
-  const h=norm(r[h2]);
-  if(!h) return;
+// CLASSIFY
+const audit=[], exits=[], entries=[], stayed=[];
 
-  const record={
+Object.keys(all).forEach(h=>{
+
+  let early=null, late=null;
+
+  all[h].forEach(r=>{
+    if(r.Source==="Earlier") early=r;
+    if(r.Source==="Later") late=r;
+  });
+
+  let status="";
+
+  if(early && late){
+    status="STAYED";
+    stayed.push(late);
+  } else if(early){
+    status="EXIT";
+    exits.push(early);
+  } else {
+    status="ENTRY";
+    entries.push(late);
+  }
+
+  audit.push({
+    HMIS:h,
+    Name: late?.Name || early?.Name || "",
+    EarlierDate: early?.Date || "",
+    LaterDate: late?.Date || "",
+    Status: status
+  });
+
+});
+
+results = {audit, exits, entries, stayed, zero};
+
+renderTables();
+
+document.getElementById("status").innerHTML =
+`✅ Done | Stayed: ${stayed.length} | Exits: ${exits.length} | Entries: ${entries.length} | Zero: ${zero.length}`;
+}
+
+// TABLE BUILDER
+function buildTable(data, cls){
+
+let html = "<table><tr><th>HMIS</th><th>Name</th><th>Date</th></tr>";
+
+data.forEach(r=>{
+  html += `
+    <tr class="${cls}">
+      <td>${r.HMIS}</td>
+      <td>${r.Name}</td>
+      <td>${r.Date}</td>
+    </tr>`;
+});
+
+html += "</table>";
+return html;
+}
+
+// RENDER TABLES
+function renderTables(){
+
+let html="";
+
+html += "<h3>Stayed (Present Both Days)</h3>";
+html += buildTable(results.stayed,"stayed");
+
+html += "<h3>Exited (Earlier Only)</h3>";
+html += buildTable(results.exits,"exit");
+
+html += "<h3>Entered (Later Only)</h3>";
+html += buildTable(results.entries,"entry");
+
+html += "<h3>HMIS = 0 (Missing HMIS Assignments)</h3>";
+html += buildTable(results.zero,"zero");
+
+document.getElementById("tables").innerHTML = html;
+}
+
+// COLOR EXCEL
+function colorSheet(ws,color){
+  const range=XLSX.utils.decode_range(ws['!ref']);
+  for(let R=1;R<=range.e.r;R++){
+    for(let C=0;C<=range.e.c;C++){
+      const cell=ws[XLSX.utils.encode_cell({r:R,c:C})];
+      if(cell) cell.s={fill:{fgColor:{rgb:color}}};
+    }
+  }
+}
+
+// DOWNLOAD EXCEL
+function downloadExcel(){
+
+if(!results.audit){
+  alert("Run comparison first");
+  return;
+}
+
+const wb=XLSX.utils.book_new();
+
+function add(name,data,color){
+
+  let output = data;
+
+  // ✅ ENSURE SHEET ALWAYS EXISTS
+  if(!output.length){
+    output = [{
+      Note: "No records found for this category"
+    }];
+  }
+
+  const ws=XLSX.utils.json_to_sheet(output);
+
+  if(color) colorSheet(ws,color);
+
+  XLSX.utils.book_append_sheet(wb,ws,name);
+}
+
+// SHEETS
+add("AUDIT",results.audit);
+add("STAYED",results.stayed,"BDD7EE");
+add("EXITS",results.exits,"FFC7CE");
+add("ENTRIES",results.entries,"C6EFCE");
+add("HMIS ZERO",results.zero,"E4C1F9"); // ✅ ALWAYS PRESENT
+
+XLSX.writeFile(wb,"HMIS_Audit.xlsx");
+
+}
+
+</script>
+
+</body>
+</html>
+``
