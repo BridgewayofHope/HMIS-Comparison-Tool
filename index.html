@@ -550,9 +550,40 @@ async function compareFiles(){
 
 function downloadResults(){
 
-    const wb = XLSX.utils.book_new();
+    const wb =
+        XLSX.utils.book_new();
 
-    // Present In Both
+    const summaryRows = [
+        {
+            Metric:"File 1 Records",
+            Value:file1Count
+        },
+        {
+            Metric:"File 2 Records",
+            Value:file2Count
+        },
+        {
+            Metric:"Present In Both",
+            Value:bothRecords.length
+        },
+        {
+            Metric:"Only Once",
+            Value:onceRecords.length
+        },
+        {
+            Metric:"HMIS Zero",
+            Value:zeroRecords.length
+        }
+    ];
+
+    XLSX.utils.book_append_sheet(
+        wb,
+        XLSX.utils.json_to_sheet(
+            summaryRows
+        ),
+        "Summary"
+    );
+
     XLSX.utils.book_append_sheet(
         wb,
         XLSX.utils.json_to_sheet(
@@ -561,7 +592,6 @@ function downloadResults(){
         "Present In Both"
     );
 
-    // HMIS Zero
     XLSX.utils.book_append_sheet(
         wb,
         XLSX.utils.json_to_sheet(
@@ -570,28 +600,15 @@ function downloadResults(){
         "HMIS Zero"
     );
 
-    // Group "Only Once" records by date
     const groupedDates = {};
 
-    onceRecords.forEach(record => {
+    onceRecords.forEach(record=>{
 
-        let dateKey = "Unknown Date";
-
-        if(record.Date){
-
-            const dateObj =
-                new Date(record.Date);
-
-            if(!isNaN(dateObj)){
-
-                dateKey =
-                    dateObj
-                    .toISOString()
-                    .split("T")[0];
-
-            }
-
-        }
+        const dateKey =
+            record.Date &&
+            record.Date !== ""
+            ? record.Date
+            : "Unknown Date";
 
         if(!groupedDates[dateKey]){
             groupedDates[dateKey] = [];
@@ -601,31 +618,69 @@ function downloadResults(){
 
     });
 
-    // Create one tab per date
-    Object.keys(groupedDates)
-        .sort()
-        .forEach(date => {
+    const sortedDates =
+        Object.keys(groupedDates)
+        .sort((a,b)=>{
 
-            let sheetName =
-                `Only Once - ${date}`;
+            if(a === "Unknown Date"){
+                return 1;
+            }
 
-            // Excel limit = 31 chars
-            sheetName =
-                sheetName.substring(0,31);
+            if(b === "Unknown Date"){
+                return -1;
+            }
 
-            XLSX.utils.book_append_sheet(
-                wb,
-                XLSX.utils.json_to_sheet(
-                    groupedDates[date]
-                ),
-                sheetName
-            );
-
+            return new Date(a) -
+                   new Date(b);
         });
+
+    const summaryDateRows = [];
+
+    sortedDates.forEach(date=>{
+
+        summaryDateRows.push({
+            Date:date,
+            Count:
+            groupedDates[date].length
+        });
+
+    });
+
+    XLSX.utils.book_append_sheet(
+        wb,
+        XLSX.utils.json_to_sheet(
+            summaryDateRows
+        ),
+        "Date Summary"
+    );
+
+    sortedDates.forEach(date=>{
+
+        let sheetName =
+            `Only Once ${date}`;
+
+        sheetName =
+            sheetName
+            .replace(/[\\\/\?\*\[\]:]/g,"")
+            .substring(0,31);
+
+        XLSX.utils.book_append_sheet(
+            wb,
+            XLSX.utils.json_to_sheet(
+                groupedDates[date]
+            ),
+            sheetName
+        );
+
+    });
 
     XLSX.writeFile(
         wb,
         "HMIS_Comparison_Results.xlsx"
     );
-
 }
+
+</script>
+
+</body>
+</html>
