@@ -3,14 +3,14 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>HMIS Comparison Tool</title>
+<title>HMIS Excel Comparison Tool</title>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
 <style>
 body{
     font-family:Arial, sans-serif;
-    background:#f4f4f4;
+    background:#f5f5f5;
     padding:20px;
 }
 
@@ -27,7 +27,7 @@ h1{
 
 button{
     padding:10px 20px;
-    margin:10px 0;
+    margin:10px 5px;
     cursor:pointer;
 }
 
@@ -37,24 +37,25 @@ table{
     margin-top:10px;
 }
 
-th, td{
+th,td{
     border:1px solid #ccc;
     padding:6px;
     text-align:left;
 }
 
 th{
-    background:#efefef;
+    background:#eee;
 }
 
 .results{
     max-height:300px;
     overflow-y:auto;
+    margin-bottom:30px;
 }
 
 .summary{
     background:#eef7ff;
-    padding:10px;
+    padding:12px;
     border-radius:6px;
     margin:15px 0;
 }
@@ -66,12 +67,12 @@ th{
 
 <h1>HMIS Excel Comparison Tool</h1>
 
-<p>Select two Excel spreadsheets to compare HMIS numbers.</p>
+<p>Select two Excel files for HMIS comparison.</p>
 
-<label>File 1:</label><br>
+<label>Excel File 1</label><br>
 <input type="file" id="file1" accept=".xlsx,.xls"><br><br>
 
-<label>File 2:</label><br>
+<label>Excel File 2</label><br>
 <input type="file" id="file2" accept=".xlsx,.xls"><br><br>
 
 <button onclick="compareFiles()">Compare Files</button>
@@ -79,10 +80,10 @@ th{
 
 <div id="summary" class="summary"></div>
 
-<h2>HMIS Numbers Found In Both Files</h2>
+<h2>HMIS Numbers Present In Both Files</h2>
 <div id="bothResults" class="results"></div>
 
-<h2>HMIS Numbers Found Only Once</h2>
+<h2>HMIS Numbers Appearing Only Once</h2>
 <div id="onceResults" class="results"></div>
 
 <h2>HMIS Numbers Equal To 0</h2>
@@ -96,39 +97,8 @@ let bothRecords = [];
 let onceRecords = [];
 let zeroRecords = [];
 
-async function readExcel(file){
-
-    return new Promise((resolve,reject)=>{
-
-        const reader = new FileReader();
-
-        reader.onload = function(e){
-
-            const data = new Uint8Array(e.target.result);
-
-            const workbook = XLSX.read(data,{
-                type:'array'
-            });
-
-            const sheetName = workbook.SheetNames[0];
-
-            const sheet = workbook.Sheets[sheetName];
-
-            resolve(
-                XLSX.utils.sheet_to_json(sheet,{
-                    defval:""
-                })
-            );
-
-        };
-
-        reader.onerror = reject;
-
-        reader.readAsArrayBuffer(file);
-
-    });
-
-}
+let file1Count = 0;
+let file2Count = 0;
 
 function normalizeHMIS(value){
 
@@ -137,7 +107,77 @@ function normalizeHMIS(value){
     }
 
     return String(value).trim();
+}
 
+function excelDateToJSDate(serial){
+
+    const utcDays = Math.floor(serial - 25569);
+    const utcValue = utcDays * 86400;
+
+    const dateInfo = new Date(utcValue * 1000);
+
+    return dateInfo;
+}
+
+function normalizeDate(value){
+
+    if(value === null || value === undefined || value === ""){
+        return "";
+    }
+
+    if(typeof value === "number"){
+
+        const d = excelDateToJSDate(value);
+
+        if(!isNaN(d)){
+            return d.toISOString().split("T")[0];
+        }
+    }
+
+    const parsed = new Date(value);
+
+    if(!isNaN(parsed)){
+        return parsed.toISOString().split("T")[0];
+    }
+
+    return "";
+}
+
+function readExcel(file){
+
+    return new Promise((resolve,reject)=>{
+
+        const reader = new FileReader();
+
+        reader.onload = function(e){
+
+            const data =
+                new Uint8Array(e.target.result);
+
+            const workbook =
+                XLSX.read(data,{
+                    type:"array"
+                });
+
+            const firstSheet =
+                workbook.SheetNames[0];
+
+            const worksheet =
+                workbook.Sheets[firstSheet];
+
+            const json =
+                XLSX.utils.sheet_to_json(
+                    worksheet,
+                    {defval:""}
+                );
+
+            resolve(json);
+        };
+
+        reader.onerror = reject;
+
+        reader.readAsArrayBuffer(file);
+    });
 }
 
 function findColumn(headers, keywords){
@@ -150,14 +190,16 @@ function findColumn(headers, keywords){
     for(const keyword of keywords){
 
         const exact =
-            normalized.find(h => h === keyword);
+            normalized.find(h =>
+                h === keyword
+            );
 
         if(exact){
+
             return headers[
                 normalized.indexOf(exact)
             ];
         }
-
     }
 
     for(const keyword of keywords){
@@ -168,86 +210,72 @@ function findColumn(headers, keywords){
             );
 
         if(partial){
+
             return headers[
                 normalized.indexOf(partial)
             ];
         }
-
     }
 
     return null;
-
-}
-
-function isDateValue(value){
-
-    if(!value){
-        return false;
-    }
-
-    return !isNaN(Date.parse(value));
-
 }
 
 function detectColumns(data){
 
-    if(!data.length){
-        throw new Error("Spreadsheet empty");
-    }
+    const headers =
+        Object.keys(data[0] || {});
 
-    const headers = Object.keys(data[0]);
+    let hmisColumn =
+        findColumn(headers,[
+            "hmis",
+            "hmis id",
+            "hmis number",
+            "client id",
+            "participant id",
+            "unique id"
+        ]);
 
-    let hmisColumn = findColumn(headers,[
-        "hmis",
-        "hmis id",
-        "hmis number",
-        "client id",
-        "participant id",
-        "unique id"
-    ]);
+    let nameColumn =
+        findColumn(headers,[
+            "name",
+            "client name",
+            "participant name",
+            "resident",
+            "full name"
+        ]);
 
-    let nameColumn = findColumn(headers,[
-        "client name",
-        "participant name",
-        "full name",
-        "name",
-        "resident"
-    ]);
-
-    let dateColumn = findColumn(headers,[
-        "entry date",
-        "exit date",
-        "service date",
-        "assessment date",
-        "created date",
-        "date"
-    ]);
-
-    // Fallback data detection
+    let dateColumn =
+        findColumn(headers,[
+            "date",
+            "entry date",
+            "exit date",
+            "service date",
+            "assessment date",
+            "created date"
+        ]);
 
     if(!hmisColumn){
 
-        let bestScore = 0;
+        let highest = 0;
 
         headers.forEach(header=>{
 
-            let numericCount = 0;
+            let score = 0;
 
             data.slice(0,100).forEach(row=>{
 
                 const value =
-                    String(row[header] || "")
-                    .trim();
+                    String(row[header] || "");
 
-                if(/^\d+$/.test(value)){
-                    numericCount++;
+                if(/^\d+$/.test(value.trim())){
+                    score++;
                 }
 
             });
 
-            if(numericCount > bestScore){
+            if(score > highest){
 
-                bestScore = numericCount;
+                highest = score;
                 hmisColumn = header;
 
             }
@@ -260,7 +288,7 @@ function detectColumns(data){
 
         headers.forEach(header=>{
 
-            let textCount = 0;
+            let score = 0;
 
             data.slice(0,50).forEach(row=>{
 
@@ -268,13 +296,13 @@ function detectColumns(data){
                     String(row[header] || "");
 
                 if(/[A-Za-z]/.test(value)
-                   && value.includes(" ")){
-                    textCount++;
+                    && value.includes(" ")){
+                    score++;
                 }
 
             });
 
-            if(textCount > 20){
+            if(score > 20){
                 nameColumn = header;
             }
 
@@ -286,17 +314,20 @@ function detectColumns(data){
 
         headers.forEach(header=>{
 
-            let dateCount = 0;
+            let score = 0;
 
             data.slice(0,50).forEach(row=>{
 
-                if(isDateValue(row[header])){
-                    dateCount++;
+                const value =
+                    row[header];
+
+                if(normalizeDate(value)){
+                    score++;
                 }
 
             });
 
-            if(dateCount > 20){
+            if(score > 20){
                 dateColumn = header;
             }
 
@@ -309,7 +340,6 @@ function detectColumns(data){
         nameColumn,
         dateColumn
     };
-
 }
 
 function renderTable(target,data){
@@ -320,17 +350,15 @@ function renderTable(target,data){
             "<p>No records found.</p>";
 
         return;
-
     }
 
-    let html = `
-    <table>
+    let html =
+    `<table>
         <tr>
             <th>HMIS</th>
             <th>Name</th>
             <th>Date</th>
-        </tr>
-    `;
+        </tr>`;
 
     data.forEach(row=>{
 
@@ -339,16 +367,13 @@ function renderTable(target,data){
             <td>${row.HMIS}</td>
             <td>${row.Name || ""}</td>
             <td>${row.Date || ""}</td>
-        </tr>
-        `;
-
+        </tr>`;
     });
 
     html += "</table>";
 
     document.getElementById(target).innerHTML =
         html;
-
 }
 
 async function compareFiles(){
@@ -363,10 +388,11 @@ async function compareFiles(){
 
     if(!file1 || !file2){
 
-        alert("Please select both files.");
+        alert(
+            "Please select both Excel files."
+        );
 
         return;
-
     }
 
     const data1 =
@@ -374,6 +400,9 @@ async function compareFiles(){
 
     const data2 =
         await readExcel(file2);
+
+    file1Count = data1.length;
+    file2Count = data2.length;
 
     const cols1 =
         detectColumns(data1);
@@ -385,11 +414,10 @@ async function compareFiles(){
        !cols2.hmisColumn){
 
         alert(
-          "Unable to detect HMIS column."
+            "Unable to detect HMIS column."
         );
 
         return;
-
     }
 
     const map1 = new Map();
@@ -412,7 +440,9 @@ async function compareFiles(){
                 ? row[cols1.nameColumn]
                 : "",
             Date:cols1.dateColumn
-                ? row[cols1.dateColumn]
+                ? normalizeDate(
+                    row[cols1.dateColumn]
+                  )
                 : ""
         });
 
@@ -435,7 +465,9 @@ async function compareFiles(){
                 ? row[cols2.nameColumn]
                 : "",
             Date:cols2.dateColumn
-                ? row[cols2.dateColumn]
+                ? normalizeDate(
+                    row[cols2.dateColumn]
+                  )
                 : ""
         });
 
@@ -453,10 +485,10 @@ async function compareFiles(){
 
     allHMIS.forEach(hmis=>{
 
-        const inFile1 =
+        const in1 =
             map1.has(hmis);
 
-        const inFile2 =
+        const in2 =
             map2.has(hmis);
 
         const record =
@@ -464,21 +496,15 @@ async function compareFiles(){
             map2.get(hmis);
 
         if(hmis === "0"){
-
             zeroRecords.push(record);
-
         }
 
-        if(inFile1 && inFile2){
-
+        if(in1 && in2){
             bothRecords.push(record);
-
         }
 
-        if(inFile1 !== inFile2){
-
+        if(in1 !== in2){
             onceRecords.push(record);
-
         }
 
     });
@@ -498,29 +524,65 @@ async function compareFiles(){
         zeroRecords
     );
 
-    document.getElementById(
-        "summary"
-    ).innerHTML = `
-        <strong>Detected Columns</strong><br>
-        File 1 HMIS: ${cols1.hmisColumn}<br>
-        File 2 HMIS: ${cols2.hmisColumn}<br><br>
+    document.getElementById("summary").innerHTML =
+    `
+    <strong>Comparison Summary</strong><br><br>
 
-        HMIS Found In Both:
-        ${bothRecords.length}<br>
+    File 1 Records: ${file1Count}<br>
+    File 2 Records: ${file2Count}<br><br>
 
-        HMIS Found Once:
-        ${onceRecords.length}<br>
+    Present In Both:
+    ${bothRecords.length}<br>
 
-        HMIS Equal To 0:
-        ${zeroRecords.length}
+    Only Once:
+    ${onceRecords.length}<br>
+
+    HMIS = 0:
+    ${zeroRecords.length}<br><br>
+
+    File 1 HMIS Column:
+    ${cols1.hmisColumn}<br>
+
+    File 2 HMIS Column:
+    ${cols2.hmisColumn}
     `;
-
 }
 
 function downloadResults(){
 
     const wb =
         XLSX.utils.book_new();
+
+    const summaryRows = [
+        {
+            Metric:"File 1 Records",
+            Value:file1Count
+        },
+        {
+            Metric:"File 2 Records",
+            Value:file2Count
+        },
+        {
+            Metric:"Present In Both",
+            Value:bothRecords.length
+        },
+        {
+            Metric:"Only Once",
+            Value:onceRecords.length
+        },
+        {
+            Metric:"HMIS Zero",
+            Value:zeroRecords.length
+        }
+    ];
+
+    XLSX.utils.book_append_sheet(
+        wb,
+        XLSX.utils.json_to_sheet(
+            summaryRows
+        ),
+        "Summary"
+    );
 
     XLSX.utils.book_append_sheet(
         wb,
@@ -533,24 +595,89 @@ function downloadResults(){
     XLSX.utils.book_append_sheet(
         wb,
         XLSX.utils.json_to_sheet(
-            onceRecords
-        ),
-        "Only Once"
-    );
-
-    XLSX.utils.book_append_sheet(
-        wb,
-        XLSX.utils.json_to_sheet(
             zeroRecords
         ),
         "HMIS Zero"
     );
 
+    const groupedDates = {};
+
+    onceRecords.forEach(record=>{
+
+        const dateKey =
+            record.Date &&
+            record.Date !== ""
+            ? record.Date
+            : "Unknown Date";
+
+        if(!groupedDates[dateKey]){
+            groupedDates[dateKey] = [];
+        }
+
+        groupedDates[dateKey].push(record);
+
+    });
+
+    const sortedDates =
+        Object.keys(groupedDates)
+        .sort((a,b)=>{
+
+            if(a === "Unknown Date"){
+                return 1;
+            }
+
+            if(b === "Unknown Date"){
+                return -1;
+            }
+
+            return new Date(a) -
+                   new Date(b);
+        });
+
+    const summaryDateRows = [];
+
+    sortedDates.forEach(date=>{
+
+        summaryDateRows.push({
+            Date:date,
+            Count:
+            groupedDates[date].length
+        });
+
+    });
+
+    XLSX.utils.book_append_sheet(
+        wb,
+        XLSX.utils.json_to_sheet(
+            summaryDateRows
+        ),
+        "Date Summary"
+    );
+
+    sortedDates.forEach(date=>{
+
+        let sheetName =
+            `Only Once ${date}`;
+
+        sheetName =
+            sheetName
+            .replace(/[\\\/\?\*\[\]:]/g,"")
+            .substring(0,31);
+
+        XLSX.utils.book_append_sheet(
+            wb,
+            XLSX.utils.json_to_sheet(
+                groupedDates[date]
+            ),
+            sheetName
+        );
+
+    });
+
     XLSX.writeFile(
         wb,
         "HMIS_Comparison_Results.xlsx"
     );
-
 }
 
 </script>
