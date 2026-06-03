@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HMIS Comparison Tool</title>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+<style>
+body{
+    font-family:Arial, sans-serif;
+    background:#f4f4f4;
+    padding:20px;
+}
+
+.container{
+    background:white;
+    padding:20px;
+    border-radius:8px;
+    box-shadow:0 0 10px rgba(0,0,0,.15);
+}
+
+h1{
+    margin-top:0;
+}
+
+button{
+    padding:10px 20px;
+    margin:10px 0;
+    cursor:pointer;
+}
+
+table{
+    width:100%;
+    border-collapse:collapse;
+    margin-top:10px;
+}
+
+th, td{
+    border:1px solid #ccc;
+    padding:6px;
+    text-align:left;
+}
+
+th{
+    background:#efefef;
+}
+
+.results{
+    max-height:300px;
+    overflow-y:auto;
+}
+
+.summary{
+    background:#eef7ff;
+    padding:10px;
+    border-radius:6px;
+    margin:15px 0;
+}
+</style>
+</head>
+<body>
+
+<div class="container">
+
+<h1>HMIS Excel Comparison Tool</h1>
+
+<p>Select two Excel spreadsheets to compare HMIS numbers.</p>
+
+<label>File 1:</label><br>
+<input type="file" id="file1" accept=".xlsx,.xls"><br><br>
+
+<label>File 2:</label><br>
+<input type="file" id="file2" accept=".xlsx,.xls"><br><br>
+
+<button onclick="compareFiles()">Compare Files</button>
+<button onclick="downloadResults()">Export Results</button>
+
+<div id="summary" class="summary"></div>
+
+<h2>HMIS Numbers Found In Both Files</h2>
+<div id="bothResults" class="results"></div>
+
+<h2>HMIS Numbers Found Only Once</h2>
+<div id="onceResults" class="results"></div>
+
+<h2>HMIS Numbers Equal To 0</h2>
+<div id="zeroResults" class="results"></div>
+
+</div>
+
+<script>
+
+let bothRecords = [];
+let onceRecords = [];
+let zeroRecords = [];
+
+async function readExcel(file){
+
+    return new Promise((resolve,reject)=>{
+
+        const reader = new FileReader();
+
+        reader.onload = function(e){
+
+            const data = new Uint8Array(e.target.result);
+
+            const workbook = XLSX.read(data,{
+                type:'array'
+            });
+
+            const sheetName = workbook.SheetNames[0];
+
+            const sheet = workbook.Sheets[sheetName];
+
+            resolve(
+                XLSX.utils.sheet_to_json(sheet,{
+                    defval:""
+                })
+            );
+
+        };
+
+        reader.onerror = reject;
+
+        reader.readAsArrayBuffer(file);
+
+    });
+
+}
+
+function normalizeHMIS(value){
+
+    if(value === null || value === undefined){
+        return "";
+    }
+
+    return String(value).trim();
+
+}
+
+function findColumn(headers, keywords){
+
+    const normalized =
+        headers.map(h =>
+            String(h).toLowerCase().trim()
+        );
+
+    for(const keyword of keywords){
+
+        const exact =
+            normalized.find(h => h === keyword);
+
+        if(exact){
+            return headers[
+                normalized.indexOf(exact)
+            ];
+        }
+
+    }
+
+    for(const keyword of keywords){
+
+        const partial =
+            normalized.find(h =>
+                h.includes(keyword)
+            );
+
+        if(partial){
+            return headers[
+                normalized.indexOf(partial)
+            ];
+        }
+
+    }
+
+    return null;
+
+}
+
+function isDateValue(value){
+
+    if(!value){
+        return false;
+    }
+
+    return !isNaN(Date.parse(value));
+
+}
+
+function detectColumns(data){
+
+    if(!data.length){
+        throw new Error("Spreadsheet empty");
+    }
+
+    const headers = Object.keys(data[0]);
+
+    let hmisColumn = findColumn(headers,[
+        "hmis",
+        "hmis id",
+        "hmis number",
+        "client id",
+        "participant id",
+        "unique id"
+    ]);
+
+    let nameColumn = findColumn(headers,[
+        "client name",
+        "participant name",
+        "full name",
+        "name",
+        "resident"
+    ]);
+
+    let dateColumn = findColumn(headers,[
+        "entry date",
+        "exit date",
+        "service date",
+        "assessment date",
+        "created date",
+        "date"
+    ]);
+
+    // Fallback data detection
+
+    if(!hmisColumn){
+
+        let bestScore = 0;
+
+        headers.forEach(header=>{
+
+            let numericCount = 0;
+
+            data.slice(0,100).forEach(row=>{
+
+                const value =
+                    String(row[header] || "")
+                    .trim();
+
+                if(/^\d+$/.test(value)){
+                    numericCount++;
+                }
+
+            });
+
+            if(numericCount > bestScore){
+
+                bestScore = numericCount;
+                hmisColumn = header;
+
+            }
+
+        });
+
+    }
+
+    if(!nameColumn){
+
+        headers.forEach(header=>{
+
+            let textCount = 0;
+
+            data.slice(0,50).forEach(row=>{
+
+                const value =
+                    String(row[header] || "");
+
+                if(/[A-Za-z]/.test(value)
+                   && value.includes(" ")){
+                    textCount++;
+                }
+
+            });
+
+            if(textCount > 20){
+                nameColumn = header;
+            }
+
+        });
+
+    }
+
+    if(!dateColumn){
+
+        headers.forEach(header=>{
+
+            let dateCount = 0;
+
+            data.slice(0,50).forEach(row=>{
+
+                if(isDateValue(row[header])){
+                    dateCount++;
+                }
+
+            });
+
+            if(dateCount > 20){
+                dateColumn = header;
+            }
+
+        });
+
+    }
+
+    return {
+        hmisColumn,
+        nameColumn,
+        dateColumn
+    };
+
+}
+
+function renderTable(target,data){
+
+    if(data.length === 0){
+
+        document.getElementById(target).innerHTML =
+            "<p>No records found.</p>";
+
+        return;
+
+    }
+
+    let html = `
+    <table>
+        <tr>
+            <th>HMIS</th>
+            <th>Name</th>
+            <th>Date</th>
+        </tr>
+    `;
+
+    data.forEach(row=>{
+
+        html += `
+        <tr>
+            <td>${row.HMIS}</td>
+            <td>${row.Name || ""}</td>
+            <td>${row.Date || ""}</td>
+        </tr>
+        `;
+
+    });
+
+    html += "</table>";
+
+    document.getElementById(target).innerHTML =
+        html;
+
+}
+
+async function compareFiles(){
+
+    const file1 =
+        document.getElementById("file1")
+        .files[0];
+
+    const file2 =
+        document.getElementById("file2")
+        .files[0];
+
+    if(!file1 || !file2){
+
+        alert("Please select both files.");
+
+        return;
+
+    }
+
+    const data1 =
+        await readExcel(file1);
+
+    const data2 =
+        await readExcel(file2);
+
+    const cols1 =
+        detectColumns(data1);
+
+    const cols2 =
+        detectColumns(data2);
+
+    if(!cols1.hmisColumn ||
+       !cols2.hmisColumn){
+
+        alert(
+          "Unable to detect HMIS column."
+        );
+
+        return;
+
+    }
+
+    const map1 = new Map();
+    const map2 = new Map();
+
+    data1.forEach(row=>{
+
+        const hmis =
+            normalizeHMIS(
+                row[cols1.hmisColumn]
+            );
+
+        if(!hmis){
+            return;
+        }
+
+        map1.set(hmis,{
+            HMIS:hmis,
+            Name:cols1.nameColumn
+                ? row[cols1.nameColumn]
+                : "",
+            Date:cols1.dateColumn
+                ? row[cols1.dateColumn]
+                : ""
+        });
+
+    });
+
+    data2.forEach(row=>{
+
+        const hmis =
+            normalizeHMIS(
+                row[cols2.hmisColumn]
+            );
+
+        if(!hmis){
+            return;
+        }
+
+        map2.set(hmis,{
+            HMIS:hmis,
+            Name:cols2.nameColumn
+                ? row[cols2.nameColumn]
+                : "",
+            Date:cols2.dateColumn
+                ? row[cols2.dateColumn]
+                : ""
+        });
+
+    });
+
+    bothRecords = [];
+    onceRecords = [];
+    zeroRecords = [];
+
+    const allHMIS =
+        new Set([
+            ...map1.keys(),
+            ...map2.keys()
+        ]);
+
+    allHMIS.forEach(hmis=>{
+
+        const inFile1 =
+            map1.has(hmis);
+
+        const inFile2 =
+            map2.has(hmis);
+
+        const record =
+            map1.get(hmis) ||
+            map2.get(hmis);
+
+        if(hmis === "0"){
+
+            zeroRecords.push(record);
+
+        }
+
+        if(inFile1 && inFile2){
+
+            bothRecords.push(record);
+
+        }
+
+        if(inFile1 !== inFile2){
+
+            onceRecords.push(record);
+
+        }
+
+    });
+
+    renderTable(
+        "bothResults",
+        bothRecords
+    );
+
+    renderTable(
+        "onceResults",
+        onceRecords
+    );
+
+    renderTable(
+        "zeroResults",
+        zeroRecords
+    );
+
+    document.getElementById(
+        "summary"
+    ).innerHTML = `
+        <strong>Detected Columns</strong><br>
+        File 1 HMIS: ${cols1.hmisColumn}<br>
+        File 2 HMIS: ${cols2.hmisColumn}<br><br>
+
+        HMIS Found In Both:
+        ${bothRecords.length}<br>
+
+        HMIS Found Once:
+        ${onceRecords.length}<br>
+
+        HMIS Equal To 0:
+        ${zeroRecords.length}
+    `;
+
+}
+
+function downloadResults(){
+
+    const wb =
+        XLSX.utils.book_new();
+
+    XLSX.utils.book_append_sheet(
+        wb,
+        XLSX.utils.json_to_sheet(
+            bothRecords
+        ),
+        "Present In Both"
+    );
+
+    XLSX.utils.book_append_sheet(
+        wb,
+        XLSX.utils.json_to_sheet(
+            onceRecords
+        ),
+        "Only Once"
+    );
+
+    XLSX.utils.book_append_sheet(
+        wb,
+        XLSX.utils.json_to_sheet(
+            zeroRecords
+        ),
+        "HMIS Zero"
+    );
+
+    XLSX.writeFile(
+        wb,
+        "HMIS_Comparison_Results.xlsx"
+    );
+
+}
+
+</script>
+
+</body>
+</html>
