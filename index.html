@@ -72,6 +72,15 @@ function readFile(file){
   });
 }
 
+function mostCommonDate(arr){
+  const freq = {};
+  arr.forEach(d=>{
+    if(!d) return;
+    freq[d] = (freq[d]||0)+1;
+  });
+  return Object.keys(freq).sort((a,b)=>freq[b]-freq[a])[0] || "";
+}
+
 async function processFiles(){
 
 const f1=file1.files[0];
@@ -91,6 +100,10 @@ const n1=detectColumn(d1,"name");
 const n2=detectColumn(d2,"name");
 const dt1=detectColumn(d1,"date");
 const dt2=detectColumn(d2,"date");
+
+// ✅ Determine MOST COMMON LATER DATE
+const laterDates = d2.map(r => r[dt2]);
+const laterCommonDate = mostCommonDate(laterDates);
 
 const all={}, zero=[];
 
@@ -133,10 +146,19 @@ Object.keys(all).forEach(h=>{
   if(early && late){
     status="STAYED";
     stayed.push(late);
-  } else if(early){
+  } 
+  else if(early){
     status="EXIT";
-    exits.push(early);
-  } else {
+
+    // ✅ APPLY YOUR RULE HERE
+    exits.push({
+      HMIS: early.HMIS,
+      Name: early.Name,
+      Date: laterCommonDate ? (laterCommonDate + " 07:00") : ""
+    });
+
+  } 
+  else {
     status="ENTRY";
     entries.push(late);
   }
@@ -185,13 +207,13 @@ let html="";
 html += "<h3>Stayed (Present Both Days)</h3>";
 html += buildTable(results.stayed,"stayed");
 
-html += "<h3>Exited (Earlier Only)</h3>";
+html += "<h3>Exited (Timestamp set to 7am of later date)</h3>";
 html += buildTable(results.exits,"exit");
 
 html += "<h3>Entered (Later Only)</h3>";
 html += buildTable(results.entries,"entry");
 
-html += "<h3>HMIS = 0 (Missing HMIS Assignments)</h3>";
+html += "<h3>HMIS = 0</h3>";
 html += buildTable(results.zero,"zero");
 
 document.getElementById("tables").innerHTML = html;
@@ -222,11 +244,8 @@ function add(name,data,color){
 
   let output = data;
 
-  // ✅ ENSURE SHEET ALWAYS EXISTS
   if(!output.length){
-    output = [{
-      Note: "No records found for this category"
-    }];
+    output = [{ Note: "No records found for this category" }];
   }
 
   const ws=XLSX.utils.json_to_sheet(output);
@@ -241,7 +260,7 @@ add("AUDIT",results.audit);
 add("STAYED",results.stayed,"BDD7EE");
 add("EXITS",results.exits,"FFC7CE");
 add("ENTRIES",results.entries,"C6EFCE");
-add("HMIS ZERO",results.zero,"E4C1F9"); // ✅ ALWAYS PRESENT
+add("HMIS ZERO",results.zero,"E4C1F9");
 
 XLSX.writeFile(wb,"HMIS_Audit.xlsx");
 
@@ -251,4 +270,3 @@ XLSX.writeFile(wb,"HMIS_Audit.xlsx");
 
 </body>
 </html>
-``
